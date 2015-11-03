@@ -20,9 +20,9 @@ def main():
     
     parser=argparse.ArgumentParser(description='Apply Sinkhorn Balancing to interaction matrix.',formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    parser.add_argument('-i','-in','--in',help='interaction matrix hdf5 file',dest='infile',type=str,required=True)
+    parser.add_argument('-i','-in','--input',help='interaction matrix hdf5 file',dest='infile',type=str,required=True)
     parser.add_argument('-v', '--verbose', dest='verbose',  action='count', help='Increase verbosity (specify multiple times for more)')
-    parser.add_argument('-o','-out','--out',help='output hdf5 file ',dest='outfile',type=str,required=False)
+    parser.add_argument('-o','-out','--output',help='output hdf5 file ',dest='outfile',type=str,required=False)
     parser.add_argument('-f',help='output factor file',dest='factorfile',type=str,required=False)
     parser.add_argument('-b',help='block size (default: hdf chunk size)',dest='blocksize',type=int)
     parser.add_argument('-t',help='balancing threshold',dest='threshold',type=float,default=1e-5)
