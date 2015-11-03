@@ -7,19 +7,22 @@ import pdb
 import h5py
 import sys
 import argparse
+import logging
 import time
 import shutil
 import re
 import os
 
+verboseprint=lambda *a, **k: None
+__version__ = "1.0"
+
 def main():
     
     parser=argparse.ArgumentParser(description='Apply Sinkhorn Balancing to interaction matrix.',formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    parser.add_argument('-in',help='interaction matrix hdf5 file',dest='infile',type=str,required=True)
-    
-    parser.add_argument('-out',help='output hdf5 file ',dest='outfile',type=str,required=False)
-    parser.add_argument('-or','--output_relative', dest='output_relative', action='store_true', help='output file relative to input file path')
+    parser.add_argument('-i','-in','--in',help='interaction matrix hdf5 file',dest='infile',type=str,required=True)
+    parser.add_argument('-v', '--verbose', dest='verbose',  action='count', help='Increase verbosity (specify multiple times for more)')
+    parser.add_argument('-o','-out','--out',help='output hdf5 file ',dest='outfile',type=str,required=False)
     parser.add_argument('-f',help='output factor file',dest='factorfile',type=str,required=False)
     parser.add_argument('-b',help='block size (default: hdf chunk size)',dest='blocksize',type=int)
     parser.add_argument('-t',help='balancing threshold',dest='threshold',type=float,default=1e-5)
@@ -33,8 +36,8 @@ def main():
     args=parser.parse_args()
 
     infile=args.infile
+    verbose=args.verbose
     outfile=args.outfile
-    output_relative=args.output_relative
     factorfile=args.factorfile
     blocksize=args.blocksize
     threshold=args.threshold
@@ -45,12 +48,21 @@ def main():
     nan_val=args.nan_val
     minimal_sum=args.minimal_sum
 
-    print("\n",end="")
+    log_level = logging.WARNING
+    if verbose == 1:
+        log_level = logging.INFO
+    elif verbose >= 2:
+        log_level = logging.DEBUG
+    logging.basicConfig(level=log_level)
+    
+    global verboseprint
+    verboseprint = print if verbose else lambda *a, **k: None
+    
+    verboseprint("\n",end="")
+
+    verboseprint("\n",end="")
     
     infile_name=os.path.basename(infile)
-    if output_relative:
-       infile_name=infile
-    
     infile_name=re.sub(".hdf5", "", infile_name)
     
     inhdf=h5py.File(infile,'r')
@@ -93,37 +105,36 @@ def main():
     if factorfile==None:
         factorfile=infile_name+'.factors'
         
-    print(sys.argv[0],": matrix ",n,"x",n,"\n",end="")
+    verboseprint(sys.argv[0],": matrix ",n,"x",n,"\n",end="")
     if blocksize==None:
         blocksize=inhdf['interactions'].chunks[0]
 
     # hdf5 is copied, and then nans in the copy are replaced with numbers (just for balancing)
     
-    print(sys.argv[0],": copying hdf file ... ", end="")
+    verboseprint(sys.argv[0],": copying hdf file ... ", end="")
     shutil.copy(infile,outfile)
-    print("done\n", end="")
+    verboseprint("done\n", end="")
     
     outhdf=h5py.File(outfile)
     
     B=outhdf['interactions']
         
     # find nan rowcols
-    print(sys.argv[0],": searching for nan rows ... ", end="")
+    verboseprint(sys.argv[0],": searching for nan rows ... ", end="")
     nan_rowcols=np.array([],dtype=bool)
     for i in np.arange(0,n,blocksize):
         nan_rowcols=np.r_[nan_rowcols,i+np.nonzero(np.all(np.isnan(A[i:i+blocksize,:]),1))[0]]
-    print("done\n", end="")
+    verboseprint("done\n", end="")
     
-    # this is a test...
     nan_rowcols_mask=np.zeros(n,dtype=bool)
     nan_rowcols_mask[nan_rowcols]=True
     
     n_nan_rowcols=len(nan_rowcols)
-    print(sys.argv[0],": found ",n_nan_rowcols," nan row/cols.\n", end="")
+    verboseprint(sys.argv[0],": found ",n_nan_rowcols," nan row/cols.\n", end="")
     
-    print(sys.argv[0],": replacing nan rows ... ", end="")
+    verboseprint(sys.argv[0],": replacing nan rows ... ", end="")
     # replace nan row cols in B with 0 for icing
-    # dumps row stripe into memory, controled by blocksize
+    # dumps row stripe into memory, controlled by blocksize
     for i in xrange(0,n,blocksize):
         current_block=B[i:i+blocksize,:]
         tmp_nan_mask=nan_rowcols_mask[i:i+blocksize]
@@ -141,43 +152,19 @@ def main():
             di_ind = [di,di+i]
             
             current_block[di_ind]=0
-
+        
+        # handle any isolated NANs
+        current_block=np.nan_to_num(current_block)
+        
         B[i:i+blocksize,:]=current_block
         
-    print("done\n", end="")
-    
-    print(sys.argv[0],": calculating nan replacements (",nan_val,") ... ", end="")
-    # calculate isolated nan replacements
-    ndist=1 # neighbor max distance
-    nans=np.array([[],[]],dtype=int).T
-    for i in np.arange(0,n,blocksize):
-        nans=np.r_[nans,np.c_[np.nonzero(np.isnan(B[i:i+blocksize,:]))]+np.array([i,0])]
-    
-    nan_vals=[]
-    for i in nans:
-        if nan_val==None:
-            neighbors=A[max(i[0]-ndist,0):i[0]+ndist+1,max(i[1]-ndist,0):i[1]+ndist+1]
-            nan_vals.append(nanmean(neighbors))
-        else:
-            nan_vals.append(nan_val)
-    print("done\n", end="")
-    
-    nan_vals=np.array(nan_vals)
-    
-    if np.any(np.isnan(nan_vals)):
-        sys.exit('imputation failed')
-    
-    print(sys.argv[0],": replacing isolated nans ... ", end="")
-    # replace isolated nans in B
-    for i in range(nans.shape[0]):
-        B[nans[i,0],nans[i,1]]=nan_vals[i]
-    print("done\n", end="")
+    verboseprint("done\n", end="")
     
     start_time=time.time()
-    print(sys.argv[0],": starting balance ... \n", end="")
+    verboseprint(sys.argv[0],": starting balance ... \n", end="")
     factors,iterations,small_means,delta,delta_bin=balance(B,threshold=threshold,blocksize=blocksize,ignore_diagonal=ignore_diagonal,minimal_sum=minimal_sum,max_iterations=max_iterations,delta_delta_limit=delta_delta_limit,elapsed_time_limit=elapsed_time_limit)
-    print(sys.argv[0],": finished",str(iterations),"iterations in",time.time()-start_time,"seconds")
-    print(sys.argv[0],": delta (",str(delta)," | ",str(delta_bin),") vs threshold (",str(threshold),")")
+    verboseprint(sys.argv[0],": finished",str(iterations),"iterations in",time.time()-start_time,"seconds")
+    verboseprint(sys.argv[0],": delta (",str(delta)," | ",str(delta_bin),") vs threshold (",str(threshold),")")
         
     # output
     f_out_fh=open(factorfile,"w")
@@ -206,7 +193,7 @@ def main():
             current_block[di_ind]=np.nan
             
             B[i:i+blocksize,:]=current_block
-        print("done\n", end="")
+        verboseprint("done\n", end="")
     
     outhdf.close()
     
@@ -234,7 +221,7 @@ def balance(A,threshold=1e-5,blocksize=None,minimal_sum=1e-5,ignore_diagonal=Fal
     
     if n>50000:
         max_iterations=100
-        print("\tsetting max_iterations = ",max_iterations,"\n", end="")
+        verboseprint("\tsetting max_iterations = ",max_iterations,"\n", end="")
 
     c=0
     last_delta=None
@@ -285,7 +272,7 @@ def balance(A,threshold=1e-5,blocksize=None,minimal_sum=1e-5,ignore_diagonal=Fal
         if(((delta_delta > 0) and (delta_delta < delta_delta_limit)) or (elapsed_time > elapsed_time_limit)):
             continue_flag=0
             
-        print("\titeration #"+str(c)+"\tlast_delta: "+str(last_delta)+"\tdelta: "+str(delta)+"\tdelta_bin: "+str(delta_bin)+"\telapsed_time: "+str(elapsed_time)+" seconds\tdelta_delta: "+str(delta_delta)+"\n",end="")
+        verboseprint("\titeration #"+str(c)+"\tlast_delta: "+str(last_delta)+"\tdelta: "+str(delta)+"\tdelta_bin: "+str(delta_bin)+"\telapsed_time: "+str(elapsed_time)+" seconds\tdelta_delta: "+str(delta_delta)+"\n",end="")
         
         axis=1-axis
 
